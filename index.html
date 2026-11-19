@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LED Kontrol</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#14121a">
+<link rel="icon" href="icon-192.png">
+<style>
+  :root { --bg:#14121a; --card:#201d29; --text:#f2eef8; --muted:#9a93a8; --accent:#ff4fa3; }
+  * { box-sizing: border-box; }
+  body { margin:0; min-height:100vh; background:var(--bg); color:var(--text); font-family: system-ui, sans-serif; display:flex; justify-content:center; }
+  main { width:100%; max-width:420px; padding:20px; }
+  h1 { font-size:1.4rem; margin:8px 0 16px; }
+  #preview { height:110px; border-radius:20px; background:#ff0000; transition:background .15s; box-shadow:0 0 50px var(--glow, #ff000066); }
+  .card { background:var(--card); border-radius:16px; padding:16px; margin-top:14px; }
+  label { display:block; color:var(--muted); font-size:.9rem; margin-bottom:8px; }
+  input[type=range] { width:100%; height:28px; }
+  #hue { -webkit-appearance:none; appearance:none; height:18px; border-radius:9px; background:linear-gradient(90deg,#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00); }
+  #hue::-webkit-slider-thumb { -webkit-appearance:none; width:28px; height:28px; border-radius:50%; background:#fff; border:3px solid #222; }
+  #hue::-moz-range-thumb { width:24px; height:24px; border-radius:50%; background:#fff; border:3px solid #222; }
+  .row { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
+  .sw { aspect-ratio:1; border-radius:50%; border:2px solid #0006; cursor:pointer; }
+  button.main { width:100%; padding:14px; font-size:1rem; border:0; border-radius:12px; background:var(--accent); color:#fff; font-weight:600; cursor:pointer; }
+  .two { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .two button { padding:12px; border:0; border-radius:12px; background:#322e3f; color:var(--text); font-size:1rem; cursor:pointer; }
+  #status { color:var(--muted); font-size:.9rem; margin-top:12px; min-height:1.2em; }
+  button:focus-visible, input:focus-visible { outline:3px solid #fff; outline-offset:2px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>LED Kontrol</h1>
+  <div id="preview"></div>
+
+  <div class="card">
+    <button class="main" id="connect">Bluetooth'a bağlan</button>
+    <div id="status">Bağlı değil</div>
+  </div>
+
+  <div class="card">
+    <label for="hue">Renk</label>
+    <input type="range" id="hue" min="0" max="360" value="0">
+    <div style="height:14px"></div>
+    <label for="bri">Parlaklık</label>
+    <input type="range" id="bri" min="1" max="100" value="100">
+  </div>
+
+  <div class="card">
+    <div class="row" id="presets"></div>
+  </div>
+
+  <div class="card two">
+    <button id="on">Aç</button>
+    <button id="off">Kapat</button>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let char = null;
+
+function setStatus(t){ $('status').textContent = t; }
+
+function hsv2rgb(h){
+  const f = n => { const k=(n+h/60)%6; return Math.round(255*(1-Math.max(0,Math.min(k,4-k,1)))); };
+  return [f(5), f(3), f(1)];
+}
+
+const pending = {};
+let busy = false;
+async function flush(){
+  busy = true;
+  while (Object.keys(pending).length && char) {
+    const key = Object.keys(pending)[0];
+    const data = new Uint8Array(pending[key]);
+    delete pending[key];
+    try {
+      if (char.writeValueWithoutResponse) await char.writeValueWithoutResponse(data);
+      else await char.writeValue(data);
+    } catch(e){ setStatus('Gönderilemedi: ' + e.message); }
+  }
+  busy = false;
+}
+function send(key, bytes){
+  if(!char){ setStatus('Önce Bluetooth\'a bağlan'); return; }
+  pending[key] = bytes;   // aynı kontrolde sadece en son değer kalır
+  if(!busy) flush();
+}
+
+function setColor(r,g,b){
+  $('preview').style.background = `rgb(${r},${g},${b})`;
+  $('preview').style.setProperty('--glow', `rgba(${r},${g},${b},.4)`);
+  send('c',[0x7e,0x07,0x05,0x03,r,g,b,0x10,0xef]);
+}
+function setBrightness(p){ send('b',[0x7e,0x04,0x01,p,0x01,0xff,0xff,0x00,0xef]); }
+
+$('hue').addEventListener('input', e => setColor(...hsv2rgb(+e.target.value)));
+$('bri').addEventListener('input', e => setBrightness(+e.target.value));
+$('on').onclick  = () => send('p',[0x7e,0x00,0x04,0xf0,0x00,0x01,0xff,0x00,0xef]);
+$('off').onclick = () => send('p',[0x7e,0x00,0x04,0x00,0x00,0x00,0xff,0x00,0xef]);
+
+[['#ff0000',[255,0,0]],['#00ff00',[0,255,0]],['#0000ff',[0,0,255]],['#ffffff',[255,255,255]],
+ ['#ffa000',[255,160,0]],['#ff00ff',[255,0,255]],['#00ffff',[0,255,255]],['#8a2be2',[138,43,226]]]
+.forEach(([css,rgb]) => {
+  const b = document.createElement('button');
+  b.className='sw'; b.style.background=css; b.setAttribute('aria-label', css);
+  b.onclick = () => setColor(...rgb);
+  $('presets').appendChild(b);
+});
+
+$('connect').onclick = async () => {
+  if(!navigator.bluetooth){ setStatus('Bu tarayıcı Bluetooth desteklemiyor. Chrome veya Edge kullan.'); return; }
+  try {
+    setStatus('Aranıyor...');
+    const dev = await navigator.bluetooth.requestDevice({
+      acceptAllDevices: true,
+      optionalServices: [0xfff0, 0xffe5, 0xffe0]
+    });
+    const server = await dev.gatt.connect();
+    const tries = [[0xfff0,0xfff3],[0xffe5,0xffe9],[0xffe0,0xffe1]];
+    char = null;
+    for(const [s,c] of tries){
+      try { char = await (await server.getPrimaryService(s)).getCharacteristic(c); break; } catch(e){}
+    }
+    if(!char){ setStatus('Bağlandı ama komut kanalı bulunamadı: ' + (dev.name||'?')); return; }
+    setStatus('Bağlandı: ' + (dev.name || 'cihaz'));
+    dev.addEventListener('gattserverdisconnected', () => { char=null; setStatus('Bağlantı koptu'); });
+  } catch(e){ setStatus('Bağlanamadı: ' + e.message); }
+};
+</script>
+</body>
+</html>
